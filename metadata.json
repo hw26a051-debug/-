@@ -1,0 +1,6 @@
+{
+  "name": "けしタイプ",
+  "description": "テトリスとタイピングを融合させたリアルタイム・アクションパズルゲーム。落ちてくる単語ブロックをタイピングで消去し、ハイスコアを目指します。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
