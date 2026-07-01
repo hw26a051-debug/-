@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, RotateCcw, Trophy, Clock, Flame, Keyboard, Sparkles, CheckCircle, AlertTriangle, Info } from 'lucide-react';
+import { Play, RotateCcw, Trophy, Clock, Flame, Keyboard, Sparkles, CheckCircle, AlertTriangle, Info, Pause, Trash2, Home } from 'lucide-react';
 
 // ==========================================
 // 1. 定数と型定義
@@ -82,16 +82,24 @@ const SYLLABLE_MAP: Record<string, string[]> = {
   "びゃ": ["bya"], "びゅ": ["byu"], "びょ": ["byo"],
   "ぴゃ": ["pya"], "ぴゅ": ["pyu"], "ぴょ": ["pyo"],
   "みゃ": ["mya"], "みゅ": ["myu"], "みょ": ["myo"],
-  "りゃ": ["rya"], "りゅ": ["ryu"], "りょ": ["ryo"]
+  "りゃ": ["rya"], "りゅ": ["ryu"], "りょ": ["ryo"],
+  "ふぁ": ["fa", "hua"], "ふぃ": ["fi", "hui"], "ふぇ": ["fe", "hue"], "ふぉ": ["fo", "fuxo", "huxo", "huo"]
+};
+
+// カタカナをひらがなに変換するヘルパー関数
+const toHiragana = (str: string): string => {
+  return str.replace(/[\u30a1-\u30f6]/g, (match) => {
+    return String.fromCharCode(match.charCodeAt(0) - 0x60);
+  }).replace(/ー/g, 'ー'); // 長音はそのまま
 };
 
 // 難易度別の単語リスト (3文字〜7文字)
 const WORDS_BY_LENGTH: Record<number, string[]> = {
-  3: ["さくら", "みかん", "りんご", "くるま", "すいか", "つくえ", "きつね", "うさぎ", "たぬき", "おかし", "ごはん", "えほん", "めがね", "ほんや", "かもめ", "ひるね", "すずめ", "おちゃ", "にほん", "いちご", "とまと", "すまほ", "さかな", "めだか", "てんき", "どうろ", "じしょ", "としょ"],
-  4: ["ふうせん", "こうえん", "らいおん", "ぺんぎん", "えんぴつ", "せんせい", "たいよう", "きんぎょ", "にんじん", "きゅうり", "くつした", "おんせん", "えあこん", "おにぎり", "あおぞら", "しゃしん", "ちゅうか", "すいーつ"],
-  5: ["ひこうき", "どうぶつ", "おれんじ", "ぱそこん", "がっこう", "ともだち", "ひまわり", "あさがお", "すきやき", "しいくいん", "おんどけい", "おこづかい", "けーたい", "おかいもの", "としょかん", "てんぷら"],
+  3: ["さくら", "みかん", "りんご", "くるま", "すいか", "つくえ", "きつね", "うさぎ", "たぬき", "おかし", "ごはん", "えほん", "めがね", "ほんや", "かもめ", "ひるね", "すずめ", "おちゃ", "にほん", "いちご", "トマト", "スマホ", "さかな", "めだか", "てんき", "どうろ", "じしょ", "としょ"],
+  4: ["ふうせん", "こうえん", "ライオン", "ペンギン", "えんぴつ", "せんせい", "たいよう", "きんぎょ", "にんじん", "きゅうり", "くつした", "おんせん", "エアコン", "おにぎり", "あおぞら", "しゃしん", "ちゅうか", "スイーツ", "フォルダ"],
+  5: ["ひこうき", "どうぶつ", "オレンジ", "パソコン", "がっこう", "ともだち", "ひまわり", "あさがお", "すきやき", "しいくいん", "おんどけい", "おこづかい", "ケータイ", "おかいもの", "としょかん", "てんぷら", "じどうしゃ", "ナポリタン"],
   6: ["しんかんせん", "おんせんがい", "どうぶつえん", "しゃしんかん", "ほっかいどう", "たんじょうび", "おしょうがつ", "うちゅうせん", "かんらんしゃ", "おんがくしつ", "すいぞくかん"],
-  7: ["ぷろぐらみんぐ", "すまーとふぉん", "としょかんいん", "せんたくばさみ", "しょうがっこう"]
+  7: ["プログラミング", "スマートフォン", "としょかんいん", "せんたくばさみ", "しょうがっこう"]
 };
 
 // ネオンカラーパレット（高いコントラストとカラフルさを重視）
@@ -162,23 +170,33 @@ function parseWordToSyllables(word: string): Syllable[] {
   return syllables;
 }
 
-// 簡易オーディオ（効果音）
+// 簡易オーディオ（効果音）- AudioContextの複数生成による上限到達を防ぐためシングルトン化
+let globalAudioCtx: AudioContext | null = null;
+
 const playBeep = (freq: number, type: OscillatorType, duration: number) => {
   try {
-    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const osc = audioCtx.createOscillator();
-    const gainNode = audioCtx.createGain();
+    if (!globalAudioCtx) {
+      globalAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    
+    // ユーザーインタラクション制限などでサスペンドしている場合はレジュームする
+    if (globalAudioCtx.state === 'suspended') {
+      globalAudioCtx.resume();
+    }
+    
+    const osc = globalAudioCtx.createOscillator();
+    const gainNode = globalAudioCtx.createGain();
     
     osc.type = type;
-    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-    gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+    osc.frequency.setValueAtTime(freq, globalAudioCtx.currentTime);
+    gainNode.gain.setValueAtTime(0.15, globalAudioCtx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, globalAudioCtx.currentTime + duration);
     
     osc.connect(gainNode);
-    gainNode.connect(audioCtx.destination);
+    gainNode.connect(globalAudioCtx.destination);
     
     osc.start();
-    osc.stop(audioCtx.currentTime + duration);
+    osc.stop(globalAudioCtx.currentTime + duration);
   } catch (e) {
     // Web Audio がブロックされた場合などは何もしない
   }
@@ -195,6 +213,7 @@ const soundGameOver = () => playBeep(220, 'sawtooth', 0.8);
 
 export default function App() {
   const [gameState, setGameState] = useState<'START' | 'PLAYING' | 'GAME_OVER'>('START');
+  const [isPaused, setIsPaused] = useState(false);
   
   const [blocks, setBlocksState] = useState<Block[]>([]);
   const blocksRef = useRef<Block[]>([]);
@@ -214,11 +233,54 @@ export default function App() {
 
   const [targetBlockId, setTargetBlockId] = useState<string | null>(null);
   
-  // スコア・コンボ・時間
+  // ゲームモード ('NORMAL' | 'HARD')
+  const [gameMode, setGameMode] = useState<'NORMAL' | 'HARD'>('NORMAL');
+  
+  // スコア・コンボ・時間・ハイスコア
   const [score, setScore] = useState(0);
+  const scoreRef = useRef(0);
+  useEffect(() => {
+    scoreRef.current = score;
+  }, [score]);
+
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
   const [gameTime, setGameTime] = useState(0);
+  const [highScore, setHighScore] = useState<number>(0);
+  const [confirmReset, setConfirmReset] = useState(false);
+
+  // ハイスコアをローカルストレージから読み込む (モード別)
+  useEffect(() => {
+    const key = gameMode === 'NORMAL' ? 'keshitype_highscore_normal' : 'keshitype_highscore_hard';
+    const saved = localStorage.getItem(key);
+    if (saved) {
+      setHighScore(parseInt(saved, 10));
+    } else {
+      // 以前の一元管理キーからの移行を試みる
+      if (gameMode === 'NORMAL') {
+        const legacy = localStorage.getItem('keshitype_highscore');
+        if (legacy) {
+          setHighScore(parseInt(legacy, 10));
+          localStorage.setItem('keshitype_highscore_normal', legacy);
+        } else {
+          setHighScore(0);
+        }
+      } else {
+        setHighScore(0);
+      }
+    }
+  }, [gameMode]);
+
+  // ハイスコアを削除する
+  const resetHighScore = () => {
+    const key = gameMode === 'NORMAL' ? 'keshitype_highscore_normal' : 'keshitype_highscore_hard';
+    localStorage.removeItem(key);
+    if (gameMode === 'NORMAL') {
+      localStorage.removeItem('keshitype_highscore'); // 古いキーもクリア
+    }
+    setHighScore(0);
+    setConfirmReset(false);
+  };
   
   // 特殊演出
   const [shake, setShake] = useState(false);
@@ -229,9 +291,10 @@ export default function App() {
   const gravityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const timeTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 落下スピードの計算 (時間経過とともに加速、最速0.15秒、開始時は0.7秒)
+  // 落下スピードの計算 (NORMAL: 最速0.2秒=200ms、HARD: 最速0.1秒=100ms)
   const getSpeedMs = () => {
-    return Math.max(150, 700 - Math.floor(gameTime / 15) * 80);
+    const limit = gameMode === 'NORMAL' ? 200 : 100;
+    return Math.max(limit, 400 - Math.floor(gameTime / 10) * 60);
   };
 
   // パーティクルの生成
@@ -283,7 +346,7 @@ export default function App() {
     const chosenLength = lengths[Math.floor(Math.random() * lengths.length)];
     const wordList = WORDS_BY_LENGTH[chosenLength];
     const word = wordList[Math.floor(Math.random() * wordList.length)];
-    const syllables = parseWordToSyllables(word);
+    const syllables = parseWordToSyllables(toHiragana(word));
 
     // 形状と向き
     // 5文字以上は必ず横向き。3〜4文字は縦横ランダム。
@@ -450,9 +513,19 @@ export default function App() {
   };
 
   // ゲームオーバーループ
-  const triggerGameOver = () => {
+  const triggerGameOver = (finalScore: number) => {
     soundGameOver();
     setGameState('GAME_OVER');
+    
+    setHighScore(prev => {
+      if (finalScore > prev) {
+        const key = gameMode === 'NORMAL' ? 'keshitype_highscore_normal' : 'keshitype_highscore_hard';
+        localStorage.setItem(key, finalScore.toString());
+        return finalScore;
+      }
+      return prev;
+    });
+
     if (gravityTimerRef.current) clearInterval(gravityTimerRef.current);
     if (timeTimerRef.current) clearInterval(timeTimerRef.current);
   };
@@ -473,12 +546,14 @@ export default function App() {
   // ゲームの初期化
   const startGame = () => {
     setGameState('PLAYING');
+    setIsPaused(false);
     setScore(0);
     setCombo(0);
     setMaxCombo(0);
     setGameTime(0);
     setTargetBlockId(null);
     setParticles([]);
+    setConfirmReset(false);
     
     const initialBlock = generateNewBlock();
     const list = [initialBlock];
@@ -488,7 +563,7 @@ export default function App() {
 
   // キーダウン（タイピング入力）の制御
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (gameState !== 'PLAYING') return;
+    if (gameState !== 'PLAYING' || isPaused) return;
 
     const key = e.key.toLowerCase();
     
@@ -566,7 +641,7 @@ export default function App() {
       setShake(true);
       setTimeout(() => setShake(false), 200);
     }
-  }, [targetBlockId, combo, maxCombo, gameState, generateNewBlock]);
+  }, [targetBlockId, combo, maxCombo, gameState, isPaused, generateNewBlock]);
 
   // イベント登録
   useEffect(() => {
@@ -574,9 +649,20 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
+  // グローバルな Esc キーによる一時停止制御
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && gameState === 'PLAYING') {
+        setIsPaused(p => !p);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [gameState]);
+
   // ゲーム時間更新タイマー
   useEffect(() => {
-    if (gameState === 'PLAYING') {
+    if (gameState === 'PLAYING' && !isPaused) {
       timeTimerRef.current = setInterval(() => {
         setGameTime(prev => {
           // 生存時間でスコア加算 (1秒ごとに1スコア)
@@ -588,11 +674,11 @@ export default function App() {
     return () => {
       if (timeTimerRef.current) clearInterval(timeTimerRef.current);
     };
-  }, [gameState]);
+  }, [gameState, isPaused]);
 
   // 物理＆重力処理のゲームループ
   useEffect(() => {
-    if (gameState !== 'PLAYING') return;
+    if (gameState !== 'PLAYING' || isPaused) return;
 
     const intervalMs = getSpeedMs();
     const timer = setInterval(() => {
@@ -614,7 +700,7 @@ export default function App() {
           // ゲームオーバー判定
           if (checkGameOverCondition(updatedBlocks)) {
             setBlocks(updatedBlocks);
-            triggerGameOver();
+            triggerGameOver(scoreRef.current);
             return;
           }
 
@@ -643,7 +729,7 @@ export default function App() {
       clearInterval(timer);
       gravityTimerRef.current = null;
     };
-  }, [gameState, Math.floor(gameTime / 15), generateNewBlock]);
+  }, [gameState, isPaused, Math.floor(gameTime / 15), generateNewBlock]);
 
   // ターゲットをマウスクリックで手動選択する
   const handleSelectTarget = (id: string) => {
@@ -667,7 +753,7 @@ export default function App() {
   ];
 
   return (
-    <div className="h-screen max-h-screen bg-slate-950 flex flex-col items-center justify-between p-3 overflow-hidden select-none">
+    <div className={`h-screen max-h-screen ${gameMode === 'HARD' ? 'bg-gradient-to-b from-red-950/40 via-slate-950 to-slate-950' : 'bg-slate-950'} flex flex-col items-center justify-between p-3 overflow-hidden select-none transition-colors duration-500`}>
       
       {/* ヘッダータイトル */}
       <header className="w-full max-w-5xl flex items-center justify-between mb-1 py-1">
@@ -685,9 +771,27 @@ export default function App() {
         
         {/* レベル/速度インジケーター */}
         {gameState === 'PLAYING' && (
-          <div className="flex items-center gap-1.5 px-2.5 py-0.5 bg-slate-900 border border-slate-800 rounded-full text-[11px] text-cyan-400 font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            SPEED: {(1000 / getSpeedMs()).toFixed(1)}x
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsPaused(p => !p)}
+              className="flex items-center gap-1.5 px-3 py-1 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-full text-[11px] text-slate-300 font-bold transition-all"
+            >
+              {isPaused ? (
+                <>
+                  <Play className="w-3 h-3 text-emerald-400 fill-current" />
+                  再開 (Esc)
+                </>
+              ) : (
+                <>
+                  <Pause className="w-3 h-3 text-cyan-400 fill-current" />
+                  一時停止 (Esc)
+                </>
+              )}
+            </button>
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 border border-slate-800 rounded-full text-[11px] font-mono ${gameMode === 'HARD' ? 'text-red-400' : 'text-cyan-400'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${gameMode === 'HARD' ? 'bg-red-500' : 'bg-cyan-400'} animate-pulse`} />
+              {gameMode}: {(1000 / getSpeedMs()).toFixed(1)}x
+            </div>
           </div>
         )}
       </header>
@@ -731,102 +835,16 @@ export default function App() {
                 <span className="text-[9px] text-slate-500">MAX {maxCombo}</span>
               </div>
               {combo >= 5 && (
-                <div className="absolute top-0 right-0 bg-pink-500 text-[8px] text-white font-bold px-1.5 py-0.5 rounded-bl-lg animate-bounce">
+                <div className="absolute top-0 right-0 bg-pink-500 text-[8px] text-white font-bold px-1.5 py-0.5 rounded-bl-lg">
                   FEVER
                 </div>
               )}
             </div>
           </div>
-
-          {/* ターゲットブロックの詳細表示パネル */}
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3 flex flex-col gap-2 backdrop-blur-sm">
-            <h3 className="text-xs font-bold text-slate-500 tracking-wider font-mono">TARGET PREVIEW</h3>
-            
-            {(() => {
-              const targetBlock = blocks.find(b => b.id === targetBlockId);
-              if (!targetBlock) {
-                return (
-                  <div className="h-24 flex flex-col items-center justify-center text-slate-600 text-xs border border-dashed border-slate-800 rounded-xl">
-                    <Info className="w-5 h-5 mb-1 opacity-50" />
-                    ターゲットなし
-                  </div>
-                );
-              }
-
-              return (
-                <div className="bg-slate-950/80 p-3 rounded-xl border border-pink-500/30 flex flex-col justify-center min-h-[96px] relative overflow-hidden">
-                  <div className="absolute top-1.5 right-1.5 text-[8px] bg-pink-500/20 text-pink-300 font-bold px-1.5 py-0.5 rounded border border-pink-500/30">
-                    TARGET ACTIVE
-                  </div>
-                  
-                  {/* 音節ごとのひらがな＋ローマ字並列カード */}
-                  <div className="flex gap-1.5 items-center mt-2 flex-wrap justify-start">
-                    {targetBlock.syllables.map((syll, idx) => {
-                      const isTyped = idx < targetBlock.currentSyllableIndex;
-                      const isCurrent = idx === targetBlock.currentSyllableIndex;
-                      
-                      let romajiText = syll.romajiOptions[0];
-                      let userTyped = "";
-                      let remaining = romajiText;
-
-                      if (isCurrent) {
-                        userTyped = targetBlock.currentInput;
-                        const bestOption = syll.romajiOptions.find(opt => opt.startsWith(userTyped)) || syll.romajiOptions[0];
-                        romajiText = bestOption;
-                        remaining = bestOption.substring(userTyped.length);
-                      }
-
-                      return (
-                        <div
-                          key={idx}
-                          className={`flex flex-col items-center justify-center px-2 py-1 rounded min-w-[40px] transition-all duration-150 border ${
-                            isTyped
-                              ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/20 shadow-[0_0_4px_rgba(16,185,129,0.1)]'
-                              : isCurrent
-                              ? 'bg-pink-950 text-pink-200 border-pink-500 scale-105 shadow-[0_0_8px_rgba(236,72,153,0.5)]'
-                              : 'bg-slate-900 text-slate-400 border-slate-800'
-                          }`}
-                        >
-                          <span className={`text-base font-bold ${isTyped ? 'line-through opacity-40' : ''}`}>
-                            {syll.hiragana}
-                          </span>
-                          <span className="text-[9px] font-mono font-bold leading-none mt-1 tracking-wider uppercase">
-                            {isTyped ? (
-                              <span className="line-through opacity-40">{romajiText}</span>
-                            ) : isCurrent ? (
-                              <>
-                                <span className="text-pink-400 font-extrabold">{userTyped}</span>
-                                <span className="text-slate-400">{remaining}</span>
-                              </>
-                            ) : (
-                              <span>{romajiText}</span>
-                            )}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  
-                  {/* 別解候補がある場合のみ小さくアシスト表示 */}
-                  {(() => {
-                    const currentSyll = targetBlock.syllables[targetBlock.currentSyllableIndex];
-                    if (currentSyll && currentSyll.romajiOptions.length > 1) {
-                      return (
-                        <div className="text-[9px] text-slate-500 font-mono mt-2">
-                          ALT INPUTS: {currentSyll.romajiOptions.join(' / ')}
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-                </div>
-              );
-            })()}
-          </div>
         </section>
 
-        {/* 中央：テトリス風グリッド（5/12） */}
-        <section className="md:col-span-5 flex justify-center">
+        {/* 中央：テトリス風グリッド（4/12） */}
+        <section className="md:col-span-4 flex justify-center">
           <div className="relative border-4 border-slate-800 bg-slate-950 rounded-2xl overflow-hidden shadow-2xl"
                style={{ width: '324px', height: '608px' }}>
             
@@ -926,6 +944,31 @@ export default function App() {
 
             {/* ゲーム状態に応じたオーバーレイ画面 */}
             <AnimatePresence>
+              {isPaused && gameState === 'PLAYING' && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center p-6 z-15"
+                >
+                  <div className="text-center flex flex-col items-center gap-3 bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-[240px] shadow-2xl">
+                    <Pause className="w-8 h-8 text-cyan-400 animate-pulse fill-current" />
+                    <div>
+                      <h3 className="text-base font-extrabold text-white font-mono tracking-wider">GAME PAUSED</h3>
+                      <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                        Escキー、または上の「再開」ボタンを押してゲームを再開してください。
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setIsPaused(false)}
+                      className="w-full mt-2 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 text-slate-950 font-extrabold rounded-xl text-xs hover:scale-105 active:scale-95 transition-all shadow-md shadow-cyan-500/10"
+                    >
+                      RESUME
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+
               {gameState === 'START' && (
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -933,36 +976,104 @@ export default function App() {
                   exit={{ opacity: 0 }}
                   className="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-6 z-20"
                 >
-                  <div className="text-center flex flex-col items-center gap-4">
-                    <div className="p-4 bg-gradient-to-tr from-pink-500 to-purple-600 rounded-full shadow-lg shadow-purple-500/20 animate-pulse">
-                      <Keyboard className="w-10 h-10 text-white" />
+                  <div className="text-center flex flex-col items-center gap-3 w-full">
+                    <div className="p-3 bg-gradient-to-tr from-pink-500 to-purple-600 rounded-full shadow-lg shadow-purple-500/20 animate-pulse">
+                      <Keyboard className="w-8 h-8 text-white" />
                     </div>
                     <div>
-                      <h2 className="text-3xl font-extrabold font-display text-white tracking-widest mb-1">
+                      <h2 className="text-2xl font-extrabold font-display text-white tracking-widest mb-0.5">
                         けしタイプ
                       </h2>
-                      <p className="text-xs text-slate-400 font-mono">
+                      <p className="text-[10px] text-slate-400 font-mono">
                         FALLING WORD MATCH PUZZLE
                       </p>
                     </div>
                     
                     {/* ゲーム解説 */}
-                    <div className="my-4 text-xs text-slate-300 leading-relaxed text-left bg-slate-900 border border-slate-800 p-4 rounded-xl max-w-[280px]">
-                      <p className="font-bold text-center text-pink-400 mb-2">ルール説明</p>
+                    <div className="my-1 text-[10px] text-slate-300 leading-relaxed text-left bg-slate-900 border border-slate-800 p-3.5 rounded-xl max-w-[280px]">
+                      <p className="font-bold text-center text-pink-400 mb-1">ルール説明</p>
                       <ul className="list-disc pl-4 space-y-1">
-                        <li>上からひらがなのブロックが落ちてきます。</li>
-                        <li>ブロックの文字（ひらがな）をキーボードでタイピングして消去！</li>
-                        <li>ブロックをクリックして、自由に狙うターゲットを切り替えられます。</li>
+                        <li>上から文字ブロックが落ちてきます。</li>
+                        <li>ブロックのカタカナ・ひらがなをタイピングして消去！</li>
+                        <li>ブロックをクリックしてターゲットを切り替えられます。</li>
                         <li>ラインを超えるとゲームオーバー！</li>
-                        <li>タイプミスをするとコンボが途切れます。</li>
+                        <li>ミスするとコンボが0になります。</li>
                       </ul>
+                    </div>
+
+                    {/* ハイスコア表示 */}
+                    {highScore > 0 && (
+                      <div className="w-full max-w-[280px] bg-slate-900/60 border border-amber-500/20 px-3 py-1.5 rounded-xl flex flex-col items-center gap-0.5">
+                        <span className="text-[8px] text-slate-500 tracking-widest font-mono font-bold uppercase">PERSONAL BEST</span>
+                        <div className="flex items-center gap-1.5 text-amber-400 font-bold text-sm font-mono">
+                          <Trophy className="w-3.5 h-3.5" />
+                          <span>{highScore} PTS</span>
+                        </div>
+                        
+                        {confirmReset ? (
+                          <div className="flex gap-2 mt-1">
+                            <button
+                              onClick={resetHighScore}
+                              className="text-[8px] bg-red-600 hover:bg-red-700 text-white px-2 py-0.5 rounded font-bold transition-all"
+                            >
+                              本当に削除
+                            </button>
+                            <button
+                              onClick={() => setConfirmReset(false)}
+                              className="text-[8px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded transition-all"
+                            >
+                              キャンセル
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmReset(true)}
+                            className="text-[8px] text-slate-500 hover:text-red-400 transition-all flex items-center gap-1 mt-0.5"
+                          >
+                            <Trash2 className="w-2.5 h-2.5" /> 記録を削除
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* ゲームモード選択 */}
+                    <div className="w-full max-w-[280px] bg-slate-900 border border-slate-800 p-2.5 rounded-xl flex flex-col gap-1.5">
+                      <span className="text-[9px] text-slate-500 tracking-widest font-mono font-bold uppercase">SELECT GAME MODE</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          onClick={() => {
+                            setGameMode('NORMAL');
+                            playBeep(523.25, 'sine', 0.1); // C5
+                          }}
+                          className={`py-1.5 px-2 rounded-lg font-bold text-[11px] transition-all border ${
+                            gameMode === 'NORMAL'
+                              ? 'bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/20'
+                              : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-300'
+                          }`}
+                        >
+                          NORMAL
+                        </button>
+                        <button
+                          onClick={() => {
+                            setGameMode('HARD');
+                            playBeep(659.25, 'sine', 0.1); // E5
+                          }}
+                          className={`py-1.5 px-2 rounded-lg font-bold text-[11px] transition-all border ${
+                            gameMode === 'HARD'
+                              ? 'bg-red-600 text-white border-red-500 shadow-md shadow-red-500/20'
+                              : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-300'
+                          }`}
+                        >
+                          HARD
+                        </button>
+                      </div>
                     </div>
 
                     <button
                       onClick={startGame}
-                      className="group relative px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold rounded-xl shadow-lg shadow-pink-500/30 hover:shadow-pink-500/50 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                      className="group relative px-6 py-2.5 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold rounded-xl shadow-lg shadow-pink-500/30 hover:shadow-pink-500/50 hover:scale-105 active:scale-95 transition-all flex items-center gap-2 text-sm"
                     >
-                      <Play className="w-5 h-5 fill-current" />
+                      <Play className="w-4 h-4 fill-current" />
                       GAME START
                     </button>
                   </div>
@@ -976,7 +1087,7 @@ export default function App() {
                   exit={{ opacity: 0 }}
                   className="absolute inset-0 bg-slate-950/95 backdrop-blur-md flex flex-col items-center justify-center p-6 z-20"
                 >
-                  <div className="text-center flex flex-col items-center gap-4">
+                  <div className="text-center flex flex-col items-center gap-4 w-full">
                     <div className="p-4 bg-red-500/20 border border-red-500 rounded-full shadow-lg shadow-red-500/20">
                       <AlertTriangle className="w-10 h-10 text-red-500" />
                     </div>
@@ -991,27 +1102,40 @@ export default function App() {
 
                     {/* スコアまとめ */}
                     <div className="my-4 w-full bg-slate-900 border border-slate-800 p-4 rounded-xl font-mono text-left max-w-[280px]">
-                      <div className="flex justify-between border-b border-slate-800 pb-2 mb-2">
+                      <div className="flex justify-between border-b border-slate-800 pb-2 mb-2 text-sm">
                         <span className="text-slate-400">FINAL SCORE:</span>
                         <span className="text-amber-400 font-bold">{score}</span>
                       </div>
-                      <div className="flex justify-between border-b border-slate-800 pb-2 mb-2">
+                      <div className="flex justify-between border-b border-slate-800 pb-2 mb-2 text-sm">
+                        <span className="text-slate-400">HIGH SCORE:</span>
+                        <span className="text-amber-500 font-bold">{Math.max(score, highScore)}</span>
+                      </div>
+                      <div className="flex justify-between border-b border-slate-800 pb-2 mb-2 text-sm">
                         <span className="text-slate-400">SURVIVED:</span>
                         <span className="text-cyan-400 font-bold">{formatTime(gameTime)}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="flex justify-between text-sm">
                         <span className="text-slate-400">MAX COMBO:</span>
                         <span className="text-pink-500 font-bold">{maxCombo} Lnk</span>
                       </div>
                     </div>
 
-                    <button
-                      onClick={startGame}
-                      className="group relative px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold rounded-xl shadow-lg shadow-pink-500/30 hover:shadow-pink-500/50 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
-                    >
-                      <RotateCcw className="w-5 h-5" />
-                      PLAY AGAIN
-                    </button>
+                    <div className="flex gap-3 w-full max-w-[280px]">
+                      <button
+                        onClick={() => setGameState('START')}
+                        className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl shadow-lg border border-slate-700 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-1.5 text-xs"
+                      >
+                        <Home className="w-4 h-4" />
+                        タイトルに戻る
+                      </button>
+                      <button
+                        onClick={startGame}
+                        className="flex-1 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-bold rounded-xl shadow-lg shadow-pink-500/20 hover:shadow-pink-500/40 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-1.5 text-xs"
+                      >
+                        <RotateCcw className="w-4 h-4" />
+                        もう一度遊ぶ
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -1019,8 +1143,8 @@ export default function App() {
           </div>
         </section>
 
-        {/* 右サイド：プレイガイド・ゲーム説明・ビジュアルキーボード（4/12） */}
-        <section className="md:col-span-4 flex flex-col gap-2.5 justify-start min-h-0">
+        {/* 右サイド：プレイガイド・ゲーム説明・ビジュアルキーボード（5/12） */}
+        <section className="md:col-span-5 flex flex-col gap-2.5 justify-start min-h-0">
           
           {/* ローマ字入力ルール・ヘルプ */}
           <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-2.5 backdrop-blur-sm">
@@ -1052,6 +1176,92 @@ export default function App() {
                 正しく打つとコンボ増加！1コンボごとに獲得スコアが <strong>+5ポイント</strong> 加算されます（ミスでリセット）。
               </p>
             </div>
+          </div>
+
+          {/* ターゲットブロックの詳細表示パネル（キーボードの直上に配置） */}
+          <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-2.5 backdrop-blur-sm flex flex-col gap-1.5">
+            <h3 className="text-xs font-bold text-slate-500 tracking-wider font-mono">TARGET PREVIEW</h3>
+            
+            {(() => {
+              const targetBlock = blocks.find(b => b.id === targetBlockId);
+              if (!targetBlock) {
+                return (
+                  <div className="h-20 flex flex-col items-center justify-center text-slate-600 text-xs border border-dashed border-slate-800 rounded-xl bg-slate-950/40">
+                    <Info className="w-4 h-4 mb-1 opacity-50" />
+                    ターゲットなし
+                  </div>
+                );
+              }
+
+              return (
+                <div className="bg-slate-950/80 p-2.5 rounded-lg border border-pink-500/30 flex flex-col justify-center min-h-[84px] relative overflow-hidden">
+                  <div className="absolute top-1.5 right-1.5 text-[8px] bg-pink-500/20 text-pink-300 font-bold px-1.5 py-0.5 rounded border border-pink-500/30">
+                    TARGET ACTIVE
+                  </div>
+                  
+                  {/* 音節ごとのひらがな＋ローマ字並列カード（7文字が絶対に改行・折り返しなしで1列に収まる設計） */}
+                  <div className="flex gap-1 items-center mt-2.5 flex-nowrap justify-start overflow-x-auto pb-1 scrollbar-thin">
+                    {targetBlock.syllables.map((syll, idx) => {
+                      const isTyped = idx < targetBlock.currentSyllableIndex;
+                      const isCurrent = idx === targetBlock.currentSyllableIndex;
+                      
+                      let romajiText = syll.romajiOptions[0];
+                      let userTyped = "";
+                      let remaining = romajiText;
+
+                      if (isCurrent) {
+                        userTyped = targetBlock.currentInput;
+                        const bestOption = syll.romajiOptions.find(opt => opt.startsWith(userTyped)) || syll.romajiOptions[0];
+                        romajiText = bestOption;
+                        remaining = bestOption.substring(userTyped.length);
+                      }
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`flex flex-col items-center justify-center px-1.5 py-1 rounded min-w-[34px] sm:min-w-[40px] grow shrink-0 transition-all duration-150 border ${
+                            isTyped
+                              ? 'bg-emerald-950/40 text-emerald-400 border-emerald-500/20 shadow-[0_0_4px_rgba(16,185,129,0.1)]'
+                              : isCurrent
+                              ? 'bg-pink-950 text-pink-200 border-pink-500 scale-105 shadow-[0_0_8px_rgba(236,72,153,0.5)]'
+                              : 'bg-slate-900 text-slate-400 border-slate-800'
+                          }`}
+                        >
+                          <span className={`text-sm sm:text-base font-bold ${isTyped ? 'line-through opacity-40' : ''}`}>
+                            {syll.hiragana}
+                          </span>
+                          <span className="text-[8px] sm:text-[9px] font-mono font-bold leading-none mt-1 tracking-wider uppercase">
+                            {isTyped ? (
+                              <span className="line-through opacity-40">{romajiText}</span>
+                            ) : isCurrent ? (
+                              <>
+                                <span className="text-pink-400 font-extrabold">{userTyped}</span>
+                                <span className="text-slate-400">{remaining}</span>
+                              </>
+                            ) : (
+                              <span>{romajiText}</span>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* 別解候補がある場合のみ小さくアシスト表示 */}
+                  {(() => {
+                    const currentSyll = targetBlock.syllables[targetBlock.currentSyllableIndex];
+                    if (currentSyll && currentSyll.romajiOptions.length > 1) {
+                      return (
+                        <div className="text-[8px] text-slate-500 font-mono mt-1.5">
+                          ALT INPUTS: {currentSyll.romajiOptions.join(' / ')}
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              );
+            })()}
           </div>
 
           {/* ビジュアルキーボードUI */}
